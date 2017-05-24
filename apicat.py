@@ -14,74 +14,74 @@ import sys
 import json
 import base64
 import subprocess				#Used to execute command line openssl binary for a particular signature
-import requests					#Actually makes the API calls
-import urllib					#To handle URL quoting
+#import urllib					#To handle URL quoting (not used at the moment)
 import uuid
 import netrc					#To load username/password or api key pairs from .netrc
 import urlparse
-import hmac
-import hashlib
+#import hmac					#Not needed at the moment as we're using AWS4Auth
+#import hashlib					#Not needed at the moment as we're using AWS4Auth
 #from OpenSSL import SSL			#If not available, "sudo port install py-openssl" or "sudo pip install pyopenssl"
 from calendar import timegm
 from datetime import datetime
+import requests					#Actually makes the API calls
 from requests.auth import HTTPBasicAuth		#If not available:  sudo -H pip install requests
 from requests_aws4auth import AWS4Auth		#If not available:  sudo -H pip install requests-aws4auth ( https://github.com/sam-washington/requests-aws4auth/ )
+from requests.auth import AuthBase
 
 
-apicat_version = "0.11"
+apicat_version = "0.12"
 
 apicat_verbose = False				#Can change to True with "-v" command line param.
 
 api_vendor = {
-              'amazon-ec2': {'auth': 'amazon-aws4', 'urltop': 'https://ec2.amazonaws.com'},
-              'amazon-s3': {'auth': 'amazon-aws4', 'urltop': 'https://s3.amazonaws.com'},
-              'atlanticnet': {'auth': 'atlanticnet-sha256', 'urltop': 'https://cloudapi.atlantic.net'},
-              'cloudbank': {'auth': 'amazon-session-token', 'urltop': 'https://api.execute-api.us-east-1.amazonaws.com/prod/v1'},
-              'cloudpassage': {'auth': 'bearer-token-cloudpassage', 'urltop': 'https://api.cloudpassage.com/v1'},
-              'digitalocean': {'auth': 'bearer-token', 'urltop': 'https://api.digitalocean.com/v2'},
-              'digitalocean-basic': {'auth': 'basic', 'urltop': 'https://api.digitalocean.com/v2'},
-              'github': {'auth': 'basic', 'urltop': 'https://api.github.com'},
-              'ipinfo': {'auth': None, 'urltop': 'https://ipinfo.io'},
-              'jsonplaceholder': {'auth': None, 'urltop': 'https://jsonplaceholder.typicode.com'},
-              'rackspace-dfw': {'auth': 'rackspace-x-auth-token', 'urltop': 'https://dfw.servers.api.rackspacecloud.com/v2'},
-              'rackspace-hkg': {'auth': 'rackspace-x-auth-token', 'urltop': 'https://hkg.servers.api.rackspacecloud.com/v2'},
-              'rackspace-iad': {'auth': 'rackspace-x-auth-token', 'urltop': 'https://iad.servers.api.rackspacecloud.com/v2'},
-              'rackspace-lon': {'auth': 'rackspace-x-auth-token', 'urltop': 'https://lon.servers.api.rackspacecloud.com/v2'},
-              'rackspace-ord': {'auth': 'rackspace-x-auth-token', 'urltop': 'https://ord.servers.api.rackspacecloud.com/v2'},
-              'rackspace-syd': {'auth': 'rackspace-x-auth-token', 'urltop': 'https://syd.servers.api.rackspacecloud.com/v2'},
-              'virustotal': {'auth': 'apikey-params', 'urltop': 'https://www.virustotal.com/vtapi/v2'}
+		'amazon-ec2': {'auth': 'amazon-aws4', 'urltop': 'https://ec2.amazonaws.com'},
+		'amazon-s3': {'auth': 'amazon-aws4', 'urltop': 'https://s3.amazonaws.com'},
+		'atlanticnet': {'auth': 'atlanticnet-sha256', 'urltop': 'https://cloudapi.atlantic.net'},
+		'cloudbank': {'auth': 'amazon-session-token', 'urltop': 'https://api.execute-api.us-east-1.amazonaws.com/prod/v1'},
+		'cloudpassage': {'auth': 'bearer-token-cloudpassage', 'urltop': 'https://api.cloudpassage.com/v1'},
+		'digitalocean': {'auth': 'bearer-token', 'urltop': 'https://api.digitalocean.com/v2'},
+		'digitalocean-basic': {'auth': 'basic', 'urltop': 'https://api.digitalocean.com/v2'},
+		'github': {'auth': 'basic', 'urltop': 'https://api.github.com'},
+		'ipinfo': {'auth': None, 'urltop': 'https://ipinfo.io'},
+		'jsonplaceholder': {'auth': None, 'urltop': 'https://jsonplaceholder.typicode.com'},
+		'rackspace-dfw': {'auth': 'rackspace-x-auth-token', 'urltop': 'https://dfw.servers.api.rackspacecloud.com/v2'},
+		'rackspace-hkg': {'auth': 'rackspace-x-auth-token', 'urltop': 'https://hkg.servers.api.rackspacecloud.com/v2'},
+		'rackspace-iad': {'auth': 'rackspace-x-auth-token', 'urltop': 'https://iad.servers.api.rackspacecloud.com/v2'},
+		'rackspace-lon': {'auth': 'rackspace-x-auth-token', 'urltop': 'https://lon.servers.api.rackspacecloud.com/v2'},
+		'rackspace-ord': {'auth': 'rackspace-x-auth-token', 'urltop': 'https://ord.servers.api.rackspacecloud.com/v2'},
+		'rackspace-syd': {'auth': 'rackspace-x-auth-token', 'urltop': 'https://syd.servers.api.rackspacecloud.com/v2'},
+		'virustotal': {'auth': 'apikey-params', 'urltop': 'https://www.virustotal.com/vtapi/v2'}
              }
 
 api_vendor_in_progress = {
-                          'google': {'urltop': 'https://www.googleapis.com/compute/v1'}
+				'google': {'urltop': 'https://www.googleapis.com/compute/v1'}
                          }
 
 
-from requests.auth import AuthBase
 
 class CloudpassageAuth(AuthBase):
-    """Attaches HTTP Cloudpassage Authentication to the given Request object."""
-    def __init__(self, sessionkey):
-        # setup any auth-related data here
-        self.sessionkey = sessionkey
+	"""Attaches HTTP Cloudpassage Authentication to the given Request object."""
+	def __init__(self, sessionkey):
+        	# setup any auth-related data here
+		self.sessionkey = sessionkey
 
-    def __call__(self, r):
-        # modify and return the request
-        r.headers['Authorization'] = self.sessionkey
-        return r
+	def __call__(self, r):
+		# modify and return the request
+		r.headers['Authorization'] = self.sessionkey
+		return r
 
 
 
 class RackspaceAuth(AuthBase):
-    """Attaches HTTP Rackspace Authentication to the given Request object."""
-    def __init__(self, sessionkey):
-        # setup any auth-related data here
-        self.sessionkey = sessionkey
+	"""Attaches HTTP Rackspace Authentication to the given Request object."""
+	def __init__(self, sessionkey):
+		# setup any auth-related data here
+		self.sessionkey = sessionkey
 
-    def __call__(self, r):
-        # modify and return the request
-        r.headers['X-Auth-Token'] = self.sessionkey
-        return r
+	def __call__(self, r):
+		# modify and return the request
+		r.headers['X-Auth-Token'] = self.sessionkey
+		return r
 
 
 
@@ -225,6 +225,7 @@ def cloudpassage_session_key(username, password):
 
 
 def rackspace_session_key(username, password):
+	"""Generate a session key to use for rackspace api calls."""
 	if username != '' and password != '':
 		debug("request_rackspace_username_and_password_both_have_values")
 	elif username == '' and password == '':
@@ -298,10 +299,10 @@ def apihost_wrapper(given_api_name, auth_dict, endpoint, method, payload, params
 
 					auth_object = AWS4Auth(auth_dict['username'], auth_dict['password'], region, service)
 
-					t = datetime.utcnow()
+					#t = datetime.utcnow()			#Not needed at the moment.
 					#amzdate = t.strftime('%Y%m%dT%H%M%SZ')
 					#amzdate = t.strftime('%a, %d %b %Y %H:%M:%S GMT')
-					amzdate = t.isoformat()
+					#amzdate = t.isoformat()		#This appears to be the best choice, not needed at the moment.
 
 					#datestamp = t.strftime('%Y%m%d') # Date w/o time, used in credential scope
 
@@ -415,9 +416,9 @@ if __name__ == "__main__":
 	parser.add_argument('-e', '--endpoint', help='Which endpoint to use', required=False)
 	parser.add_argument('-u', '--username', help='Username (or digitalocean token)', required=False)
 	parser.add_argument('-p', '--password', help='Password', required=False)
-	parser.add_argument(      '--params', help='Parameters', type=json.loads, default={}, required=False)
-	parser.add_argument(      '--region', help='Region', required=False)
-	parser.add_argument(      '--files', help='Files', required=False)
+	parser.add_argument('--params', help='Parameters', type=json.loads, default={}, required=False)
+	parser.add_argument('--region', help='Region', required=False)
+	parser.add_argument('--files', help='Files', required=False)
 
 	#Not yet needed
 	#parser.add_argument('-k', '--key', help='Key', required=False)
@@ -448,7 +449,7 @@ if __name__ == "__main__":
 	#else:
 	#	auth_info['secret'] = None
 
-	if auth_info['username'] == None and auth_info['password'] == None: 		#and auth_info['key'] == None and auth_info['secret'] == None:
+	if auth_info['username'] is None and auth_info['password'] is None: 		#and auth_info['key'] == None and auth_info['secret'] == None:
 		debug("authentication:No authentication supplied, will use .netrc file if authentication needed.")
 
 	payload = ''
@@ -458,10 +459,10 @@ if __name__ == "__main__":
 		if args['files'] is None or args['files'] == '':
 			debug("request_payload:Reading payload from stdin")
 			payload = sys.stdin.read()
- 
- 	if args['verbose']:
- 		apicat_verbose = True
- 
+
+	if args['verbose']:
+		apicat_verbose = True
+
 	print(apihost_wrapper(args['apihost'], auth_info, args['endpoint'], str(args['method']).upper(), payload, args['params'], args['region'], args['files']))
 
 	#FIXME - come up with an appropriate shell return code

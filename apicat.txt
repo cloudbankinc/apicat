@@ -1,0 +1,176 @@
+
+
+==== Quickstart
+	To start working with the api for Example corporation:
+
+1) Place apicat somewhere in your path.  To see what directories this
+includes, run:
+
+echo "$PATH"
+
+	Once you've placed the program, go to that directory and run:
+
+chmod 755 apicat
+
+	You chould now be able to run it with:
+
+apicat -h
+
+	This will print a list of providers that are tested with apicat;
+if your provider isn't listed, feel free to contact the author to request
+it.
+
+
+2) If you don't already have an API key for your provider, go to the web
+site for that provider (*1), log in, find out how to create an API key, and do
+so.  You'll likely get two random-looking sets of characters.  The one
+named "secret" or "private" is the one you'll use on the "password" line
+in the next step; the other one will be used on the "login" line.
+
+
+3) For non-windows operating systems, create ~/.netrc if it's not already
+there and make sure no other normal users on this system can access it:
+
+touch ~/.netrc
+chmod go-rwx ~/.netrc
+
+	if using windows, the "netrc" file in your home directory.
+
+(Add instructions for windows)
+
+
+4) Edit that file.  If you haven't entered your api keypair or username
+and password for example, we'll add it now at the end of the file.  Do
+one of the following (4.1 or 4.2 preferred):
+
+	4.1) If you have an API Key and API Key secret, use those:
+
+machine api.example.com
+	login		99887766aabbccdd
+	password	9f8d7e6c5a4b
+
+	4.2) If your cloud provider uses a single "token" for its API
+(such as Digitalocean), put that in on the "login" line and put a pair of
+double quotes for the password:
+
+machine api.example.com
+	login		a12b3c4d77889900
+	password	""
+
+	For github, your normal account name goes in the "login" field
+and the oauth access token you create goes in the "password" field.
+
+	For rackspace use:
+
+machine dfw.servers.api.rackspacecloud.com
+	login		your_username
+	password	api_key
+
+	, selecting the right hostname for the region in which you're
+working.
+
+	4.3) While an API key is preferred, if you only have a username and
+password, use those as a fallback:
+
+machine api.example.com
+	login		bob@myemail.com
+	password	fleebsnarfle7!
+
+	Make sure you have at least one blank line at the end of the
+file.
+
+5) Run one of the test commands for your cloud provider.  If you do not
+have an account anywhere, use jsonplaceholder as it does not require any
+account or authentication.
+
+atlanticnet:
+	apicat -a atlanticnet -e list-instances
+	apicat -a atlanticnet -e describe-image --params '{"imageid": "ubuntu-14.04_64bit"}'
+
+cloudpassage:
+	apicat -a cloudpassage -e firewall_zones
+
+digitalocean:
+	apicat -a digitalocean -e account
+
+github:
+	apicat -a github -e users/your_account_name_here/keys
+
+google:
+	apicat -a google -e projects/stone-ground-99999		#Replace project name with one of your projects
+
+ipinfo:
+	apicat -a ipinfo -e 8.8.8.8
+
+jsonplaceholder
+	apicat -a jsonplaceholder -e /posts/1
+
+rackspace
+	apicat -a rackspace-dfw -e 999999/servers -v		#Replace 999999 with your tenantId (go to https://mycloud.rackspace.com and the numerical tenant Id will show up in the redirected URL.)
+
+virustotal
+	apicat -a virustotal -e 'file/report' -m GET --params '{"resource": "5ed97a87faca3d24bb2891ffcfacd6dff55fe68f70b324f8cb82ce657539affe"}'
+	(Note: POST submissions not working as of v0.9)
+
+
+	Here's where to start to add an API key:
+atlanticnet:		https://cloud.atlantic.net/?page=account
+cloudpassage:		https://portal.cloudpassage.com/ => Settings => API Keys
+digitalocean:		https://cloud.digitalocean.com/settings/api/tokens => Generate New Token
+github:			https://github.com/settings/tokens (help at https://help.github.com/articles/creating-a-personal-access-token-for-the-command-line/ )
+google:			https://console.cloud.google.com/apis/credentials .  Create an "OAuth client ID".
+ipinfo:			https://ipinfo.io/pricing  (No key needed for up to 1000 requests/day)
+jsonplaceholder:	(No key needed)
+rackspace:		https://account.rackspace.com/users => your account => Rackspace API Key
+virustotal:		https://www.virustotal.com/en/documentation/public-api/ => "Join our community".  Once done, key can be found at https://www.virustotal.com/en/user/your_account_name/apikey/
+
+
+	For more information about what API calls are available for each
+provider, see their API documentation pages:
+
+atlantic.net:		https://www.atlantic.net/docs/api/
+cloudbank:
+cloudpassage:		https://library.cloudpassage.com/help/cloudpassage-api-documentation
+digitalocean:		https://developers.digitalocean.com/documentation/v2/
+github:			https://developer.github.com/ and https://developer.github.com/v3/
+google:			https://cloud.google.com/compute/docs/reference/latest/ and https://developers.google.com/apis-explorer/?hl=en_US#p/compute/v1/
+ipinfo:			https://ipinfo.io/developers
+jsonplaceholder:	https://jsonplaceholder.typicode.com/ and https://github.com/typicode/jsonplaceholder#how-to
+rackspace:		https://developer.rackspace.com/docs/
+virustotal:		https://www.virustotal.com/en/documentation/public-api/
+
+======== Using a proxy
+
+- To use localhost port 3128 (squid) as a proxy for all calls, run this
+before running apicat:
+
+export http_proxy='http://127.0.0.1:3128'
+export https_proxy='http://127.0.0.1:3128'
+
+	, or if a username and password have to be specified:
+
+export http_proxy="http://user:pass@10.10.1.10:3128"
+export https_proxy="http://user:pass@10.10.1.10:3128"
+
+	For a socks proxy, use port 1080.
+
+
+======== Input
+
+- Make sure to use double quotes around any text in the json you feed
+into apicat.
+
+
+
+======== Output
+
+- To format the output more readably for humans, install "jq" (See
+https://github.com/stedolan/jq/releases if your operating system doesn't
+include it).  Example of how to use it:
+
+apicat ........ | jq . | less
+
+	jq can also extract fields and do general processing on the json
+output of apicat.
+
+

@@ -6,10 +6,11 @@ anything.
 """
 
 #Copyright 2017 William Stearns <william.l.stearns@gmail.com>
-#Released under the GNU GPL.
+#Released under the GNU GPL version 3.
 
 #Dedicated to Annie, Lucy, Ricky, Rogue, and Stone, 5 of the .... 'apiest cats you'll ever meet.
 
+from __future__ import print_function		#To make print require parens
 import sys
 import json
 import base64
@@ -18,18 +19,18 @@ import subprocess				#Used to execute command line openssl binary for a particul
 import uuid
 import netrc					#To load username/password or api key pairs from .netrc
 import urlparse
-#import hmac					#Not needed at the moment as we're using AWS4Auth
-#import hashlib					#Not needed at the moment as we're using AWS4Auth
+import hmac					#Needed?
+import hashlib					#Needed?
 #from OpenSSL import SSL			#If not available, "sudo port install py-openssl" or "sudo pip install pyopenssl"
 from calendar import timegm
 from datetime import datetime
 import requests					#Actually makes the API calls
 from requests.auth import HTTPBasicAuth		#If not available:  sudo -H pip install requests
-from requests_aws4auth import AWS4Auth		#If not available:  sudo -H pip install requests-aws4auth ( https://github.com/sam-washington/requests-aws4auth/ )
 from requests.auth import AuthBase
+from requests_aws4auth import AWS4Auth		#If not available:  sudo -H pip install requests-aws4auth ( https://github.com/sam-washington/requests-aws4auth/ )
 
 
-apicat_version = "0.12"
+apicat_version = "0.13"
 
 apicat_verbose = False				#Can change to True with "-v" command line param.
 
@@ -51,18 +52,18 @@ api_vendor = {
 		'rackspace-ord': {'auth': 'rackspace-x-auth-token', 'urltop': 'https://ord.servers.api.rackspacecloud.com/v2'},
 		'rackspace-syd': {'auth': 'rackspace-x-auth-token', 'urltop': 'https://syd.servers.api.rackspacecloud.com/v2'},
 		'virustotal': {'auth': 'apikey-params', 'urltop': 'https://www.virustotal.com/vtapi/v2'}
-             }
+	     }
 
 api_vendor_in_progress = {
 				'google': {'urltop': 'https://www.googleapis.com/compute/v1'}
-                         }
+			 }
 
 
 
 class CloudpassageAuth(AuthBase):
 	"""Attaches HTTP Cloudpassage Authentication to the given Request object."""
 	def __init__(self, sessionkey):
-        	# setup any auth-related data here
+		# setup any auth-related data here
 		self.sessionkey = sessionkey
 
 	def __call__(self, r):
@@ -87,13 +88,13 @@ class RackspaceAuth(AuthBase):
 
 def utc_timestamp():
 	"""Returns seconds since the epoch in UTC/GMT."""
-	#Equivalent of shell      date '+%s'
+	#Equivalent of shell date '+%s'
 	return timegm(datetime.utcnow().utctimetuple())
 
 
 
 def debug(debug_string):
-	"""Provide ability to debug, sends message to SNS prod-debug queue."""
+	"""Provide ability to debug, sends message to stderr and optionally an SNS prod-debug queue."""
 
 	global apicat_verbose
 
@@ -199,6 +200,55 @@ def generic_api(auth_object, headers, top_url, endpoint, params, user_method, pa
 #	return kSigning
 
 
+def amazon_pool_authenticate_user(username, password, pool_id, app_client_id):
+	import boto3
+	client = boto3.client('cognito-idp')
+
+	auth_params = {'USERNAME' : username, 'PASSWORD' : password}
+
+	init_response = client.admin_initiate_auth(AuthFlow='ADMIN_NO_SRP_AUTH', \
+						    ClientId=app_client_id, \
+						    AuthParameters=auth_params, \
+						    UserPoolId=pool_id \
+						  )
+
+	#FIXME - remember if we're interactive or not before doing the following challenge handling.
+	while 'ChallengeName' in init_response:
+		if init_response['ChallengeName'] == 'NEW_PASSWORD_REQUIRED':
+			while True:
+				new_password = raw_input('Temporary password must be updated, enter new password: : ')
+				new_password_repeated = raw_input('Re-enter new password: : ')
+				if new_password == new_password_repeated:
+					break
+				else:
+					print('Passwords do not match\n')
+
+			challenge_response = {'NEW_PASSWORD' : new_password, 'USERNAME' : username}
+			init_response = client.admin_respond_to_auth_challenge(UserPoolId=pool_id, \
+									   ClientId=app_client_id, \
+									   ChallengeName='NEW_PASSWORD_REQUIRED', \
+									   ChallengeResponses=challenge_response, \
+									   Session=init_response['Session'] \
+									   )
+		elif init_response['ChallengeName'] == 'SMS_MFA':
+			code = raw_input('Enter MFA code: ')
+			challenge_response = {'USERNAME': username, 'SMS_MFA_CODE' : code}
+			init_response = client.admin_respond_to_auth_challenge(UserPoolId=pool_id, \
+									   ClientId=app_client_id, \
+									   ChallengeName='SMS_MFA', \
+									   ChallengeResponses=challenge_response, \
+									   Session=init_response['Session'] \
+									   )
+		else:
+			debug('unhandled response')
+			debug(init_response)
+
+
+	debug('Successful Authentication!')
+	debug('Session Token:')
+	return init_response['AuthenticationResult']['IdToken']
+
+
 def cloudpassage_session_key(username, password):
 	"""Returns the session key needed to authenticate to CloudPassage."""
 	if username != '' and password != '':
@@ -252,8 +302,10 @@ def rackspace_session_key(username, password):
 
 
 
-def apihost_wrapper(given_api_name, auth_dict, endpoint, method, payload, params, region, files):
+def apihost_wrapper(given_api_name, auth_dict, endpoint, method, payload, params, prov_details, files):
 	"""Handles any apihost specific details of constructing the request or managing the results."""
+
+	region = prov_details['region']
 
 	api_name = str(given_api_name).lower()
 
@@ -361,8 +413,7 @@ def apihost_wrapper(given_api_name, auth_dict, endpoint, method, payload, params
 			elif api_vendor[api_name]['auth'] == 'bearer-token':
 				headers['Authorization'] = 'Bearer ' + str(auth_dict['username'])
 			elif api_vendor[api_name]['auth'] == 'amazon-session-token':
-				import authenticate_user
-				headers['Authorization'] = authenticate_user.authenticate_user(auth_dict['username'], auth_dict['password'])
+				headers['Authorization'] = amazon_pool_authenticate_user(auth_dict['username'], auth_dict['password'], prov_details['pool'], prov_details['app_client'])
 			elif api_vendor[api_name]['auth'] == 'atlanticnet-sha256':
 				params['ACSAccessKeyId'] = auth_dict['username']
 				params['Action'] = endpoint
@@ -374,7 +425,7 @@ def apihost_wrapper(given_api_name, auth_dict, endpoint, method, payload, params
 
 				string_to_sign = str(params['Timestamp']) + str(params['Rndguid'])
 				# Create a hash of the signature using sha256 and then base64 encode the sha256 hash:
-				#We don't need to use:    urllib.quote(    ,'')[:-3]    because requests will url-encode the signature when converting all params into a URL.
+				#We don't need to use: urllib.quote(    ,'')[:-3] because requests will url-encode the signature when converting all params into a URL.
 				#The following command is very sensitive to change.
 				signature_output = subprocess.check_output("/bin/echo -n " + str(string_to_sign) + " | openssl dgst -sha256 -hmac " + str(auth_dict['password']) + " -binary | openssl enc -base64", shell=True).rstrip("\n")
 				params['Signature'] = signature_output
@@ -419,6 +470,22 @@ if __name__ == "__main__":
 	parser.add_argument('--params', help='Parameters', type=json.loads, default={}, required=False)
 	parser.add_argument('--region', help='Region', required=False)
 	parser.add_argument('--files', help='Files', required=False)
+	parser.add_argument('--pool', help='pool_id for amazon cognito', required=False)
+	parser.add_argument('--appclient', help='app_client_id for amazon cognito', required=False)
+
+
+
+	#import ConfigParser
+
+	#config = ConfigParser.ConfigParser()
+	#config.read('cognito.cfg')
+
+	#pool_id = config.get('auth', 'pool_id')
+	#app_client_id = config.get('auth', 'app_client_id')
+
+
+
+
 
 	#Not yet needed
 	#parser.add_argument('-k', '--key', help='Key', required=False)
@@ -463,6 +530,6 @@ if __name__ == "__main__":
 	if args['verbose']:
 		apicat_verbose = True
 
-	print(apihost_wrapper(args['apihost'], auth_info, args['endpoint'], str(args['method']).upper(), payload, args['params'], args['region'], args['files']))
+	print(apihost_wrapper(args['apihost'], auth_info, args['endpoint'], str(args['method']).upper(), payload, args['params'], {'region': args['region'], 'pool': args['pool'], 'app_client': args['appclient']}, args['files']))
 
 	#FIXME - come up with an appropriate shell return code

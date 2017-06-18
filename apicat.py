@@ -30,9 +30,10 @@ from requests.auth import AuthBase
 from requests_aws4auth import AWS4Auth		#If not available:  sudo -H pip install requests-aws4auth ( https://github.com/sam-washington/requests-aws4auth/ )
 
 
-apicat_version = "0.13"
+apicat_version = "0.14"
 
 apicat_verbose = False				#Can change to True with "-v" command line param.
+
 
 api_vendor = {
 		'amazon-ec2': {'auth': 'amazon-aws4', 'urltop': 'https://ec2.amazonaws.com'},
@@ -82,6 +83,19 @@ class RackspaceAuth(AuthBase):
 	def __call__(self, r):
 		# modify and return the request
 		r.headers['X-Auth-Token'] = self.sessionkey
+		return r
+
+
+
+class AmazonPoolAuth(AuthBase):
+	"""Attaches HTTP Amazon Pool Authentication to the given Request object."""
+	def __init__(self, sessionkey):
+		# setup any auth-related data here
+		self.sessionkey = sessionkey
+
+	def __call__(self, r):
+		# modify and return the request
+		r.headers['Authorization'] = self.sessionkey
 		return r
 
 
@@ -413,7 +427,10 @@ def apihost_wrapper(given_api_name, auth_dict, endpoint, method, payload, params
 			elif api_vendor[api_name]['auth'] == 'bearer-token':
 				headers['Authorization'] = 'Bearer ' + str(auth_dict['username'])
 			elif api_vendor[api_name]['auth'] == 'amazon-session-token':
-				headers['Authorization'] = amazon_pool_authenticate_user(auth_dict['username'], auth_dict['password'], prov_details['pool'], prov_details['app_client'])
+				#headers['Authorization'] = amazon_pool_authenticate_user(auth_dict['username'], auth_dict['password'], prov_details['pool'], prov_details['app_client'])
+				#The above line doesn't work: It appears to be the same problem of the requests module assuming no authentication was done and replacing it with Basic Auth.  We override with the same approach of overriding the base class; see AmazonPoolAuth.
+				session_token = amazon_pool_authenticate_user(auth_dict['username'], auth_dict['password'], prov_details['pool'], prov_details['app_client'])
+				auth_object = AmazonPoolAuth(str(session_token))	#The session_token does NOT need to be preceded by Bearer
 			elif api_vendor[api_name]['auth'] == 'atlanticnet-sha256':
 				params['ACSAccessKeyId'] = auth_dict['username']
 				params['Action'] = endpoint
